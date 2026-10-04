@@ -291,7 +291,7 @@ $ emacs --daemon
 $ etm ws new review --switch
 $ etm pane new review sh --kind shell --region bottom
 $ etm send review/sh 'make test' --enter
-$ etm wait review/sh --until match:'passed|failed' --timeout 5m
+$ etm wait review/sh --until match:'passed\|failed' --timeout 5m
 $ etm capture review/sh --since c1:@dots{}
 @end example
 
@@ -1099,7 +1099,7 @@ Block until the condition holds, or fail with @samp{wait.timeout} (exit
 7) after @var{dur} (default 30s).  @code{idle}: no change for
 @option{--idle-ms} (default 1000).  @code{exit}: no live foreground
 process, with @code{exit_status}.  @code{match:@var{re}}: the Emacs
-regexp @var{re} matches output after @option{--since} (default: the end
+regexp @var{re} (alternation is @samp{\|}, a bare @samp{|} is literal) matches output after @option{--since} (default: the end
 when the wait began), with @code{match} and the @code{cursor} after it.
 The CLI polls every @option{--poll-ms} with a zero timeout, so Emacs is
 never blocked; polls that decide nothing leave no event.  The timeout

@@ -59,7 +59,7 @@ $ emacs --daemon
 $ etm ws new review --switch
 $ etm pane new review sh --kind shell --region bottom
 $ etm send review/sh 'make test' --enter
-$ etm wait review/sh --until match:'passed|failed' --timeout 5m
+$ etm wait review/sh --until match:'passed\|failed' --timeout 5m
 $ etm capture review/sh --since c1:…
 ```
 
@@ -78,7 +78,8 @@ Each answer is one envelope. Off a terminal, or with `--json`, it is JSON:
 The `cursor` `send` returns marks the pane's end before the text went in:
 pass it to `capture --since` to read only what arrived after it, and to
 `wait --until match:RE --since` to match output the command has already
-printed. A `global` workspace always exists, so the shortest session needs
+printed. `RE` is an Emacs regexp: alternation is `\|` (a bare `|` is
+literal). A `global` workspace always exists, so the shortest session needs
 none:
 
 ```console

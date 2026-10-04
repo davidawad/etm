@@ -195,8 +195,10 @@ The label (`*etm:WS/KEY*') is never identity, only what a human sees."
 (defun etm-pane--make-comint (label dir cmd)
   "Fresh comint buffer LABEL running shell command CMD in DIR."
   (require 'comint)
-  (let ((buf (generate-new-buffer label))
-        (default-directory dir))
+  (let ((buf (generate-new-buffer label)))
+    ;; `make-comint-in-buffer' starts the process with BUF's own
+    ;; `default-directory', so set it there rather than binding it here.
+    (with-current-buffer buf (setq default-directory dir))
     (make-comint-in-buffer label buf shell-file-name nil "-c" cmd)
     (let ((proc (get-buffer-process buf)))
       (when proc

@@ -148,6 +148,28 @@ the second workspace silently steals the first one's pane."
                                                          :since (plist-get sent :cursor))
                                          :text))))))
 
+(defconst etm-test-pane--dir
+  (file-name-directory (or load-file-name buffer-file-name)))
+
+(ert-deftest etm-wait-match-documented-alternation-example ()
+  (etm-test-with-clean
+    (etm-test-data "pane.new" :key "alt" :kind "cmd" :cmd "sleep 0.3; echo 2 failed")
+    (let ((hit (etm-test-data "wait" :addr "alt" :until "match:passed\\|failed" :timeout 5)))
+      (should (equal (plist-get hit :match) "failed")))
+    (dolist (f '("../../README.md" "../../docs/etm.texi"))
+      (with-temp-buffer
+        (insert-file-contents (expand-file-name f etm-test-pane--dir))
+        (should (search-forward "match:'passed\\|failed'" nil t))))))
+
+(ert-deftest etm-cmd-pane-honours-path ()
+  (etm-test-with-clean
+    (let* ((dir (file-name-as-directory (file-truename (make-temp-file "etm-cwd" t))))
+           (out (expand-file-name "cwd.txt" dir)))
+      (etm-test-data "pane.new" :key "cwd" :kind "cmd" :path dir :cmd "pwd > cwd.txt")
+      (etm-test-data "wait" :addr "cwd" :until "exit" :timeout 5)
+      (should (equal (string-trim (with-temp-buffer (insert-file-contents out) (buffer-string)))
+                     (directory-file-name dir))))))
+
 (ert-deftest etm-wait-exit-reports-status ()
   (etm-test-with-clean
     (etm-test-data "pane.new" :key "job" :kind "cmd" :cmd "echo done; exit 4")
