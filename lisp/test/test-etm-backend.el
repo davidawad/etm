@@ -154,8 +154,14 @@ Workspaces BODY created are removed again."
 
 (defun etm-test-backend-run (file)
   "Run the backend suite, writing its report to FILE; return unexpected count."
-  (let* ((stats (ert-run-tests-batch "^etm-backend-"))
-         (bad (ert-stats-completed-unexpected stats)))
+  ;; Emacs 29's ERT sees a test's skip or failure only through `debugger',
+  ;; which a plain `condition-case' suppresses -- and the server wraps
+  ;; `emacsclient --eval' in one, so the signal would escape the whole
+  ;; run.  A `debug' handler in between lets ERT's debugger see it again.
+  (let* ((stats (condition-case nil
+                    (ert-run-tests-batch "^etm-backend-")
+                  ((debug error) nil)))
+         (bad (if stats (ert-stats-completed-unexpected stats) 1)))
     (with-temp-file file
       (insert (with-current-buffer (messages-buffer) (buffer-string))
               (format "\nETM-RESULT %s %d\n" (etm-test-backend-expected) bad)))
