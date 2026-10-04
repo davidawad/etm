@@ -1,0 +1,6 @@
+/target
+Cargo.lock.bak
+*.elc
+docs/etm.info
+docs/dir
+makeinfo.log

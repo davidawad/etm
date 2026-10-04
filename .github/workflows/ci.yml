@@ -1,0 +1,86 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: cargo (Emacs ${{ matrix.emacs }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        emacs: ["29.4", "30.1"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs }}
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        # The end-to-end suites start throwaway `emacs -Q --daemon`s.
+        run: cargo test --workspace
+
+  elisp:
+    name: ERT ${{ matrix.backend }} (Emacs ${{ matrix.emacs }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        emacs: ["29.4", "30.1"]
+        backend: [single, tab-bar, tabspaces, persp-mode]
+    env:
+      ETM_TEST_PACKAGE_DIR: ${{ github.workspace }}/.elpa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs }}
+      - name: tmux (terminal frames for the daemons)
+        run: sudo apt-get update && sudo apt-get install -y tmux
+      - name: packages
+        run: |
+          emacs -Q --batch --eval "(progn
+            (setq package-user-dir \"$ETM_TEST_PACKAGE_DIR\")
+            (require 'package)
+            (add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\") t)
+            (package-initialize)
+            (package-refresh-contents)
+            (dolist (p '(persp-mode tabspaces package-lint))
+              (unless (package-installed-p p) (package-install p))))"
+      - name: lint (byte-compile, checkdoc, package-lint)
+        run: |
+          ETM_REQUIRE_PACKAGE_LINT=1 emacs -Q --batch \
+            --eval "(setq package-user-dir \"$ETM_TEST_PACKAGE_DIR\")" \
+            -l lisp/test/etm-lint.el -- lisp/etm*.el
+      - name: ERT
+        run: lisp/test/run-tests.sh unit ${{ matrix.backend }}
+
+  manual:
+    name: Info manual (makeinfo, warnings fail)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: texinfo
+        run: sudo apt-get update && sudo apt-get install -y texinfo
+      - name: makeinfo
+        run: |
+          makeinfo --no-split -o docs/etm.info docs/etm.texi 2>makeinfo.log || { cat makeinfo.log; exit 1; }
+          if [ -s makeinfo.log ]; then cat makeinfo.log; exit 1; fi
+          install-info docs/etm.info docs/dir
+          grep -q '^\* etm: (etm)' docs/dir
+      - uses: actions/upload-artifact@v4
+        with:
+          name: etm.info
+          path: docs/etm.info

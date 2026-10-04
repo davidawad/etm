@@ -1,0 +1,1492 @@
+\input texinfo    @c -*- texinfo -*-
+@c %**start of header
+@setfilename etm.info
+@settitle etm: drive Emacs from outside, as JSON verbs
+@documentencoding UTF-8
+@documentlanguage en
+@set VERSION 0.1.0
+@set URL https://github.com/davidawad/etm
+@c %**end of header
+
+@copying
+This manual is for etm, version @value{VERSION}: a command-line tool and
+an Emacs package that drive a running Emacs (its workspaces, panes and
+terminals) as a closed set of JSON verbs.
+
+Copyright @copyright{} 2026 David Awad.
+
+@quotation
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the
+``Software''), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the conditions of the MIT License, which is distributed with etm in the
+file @file{LICENSE}.
+@end quotation
+@end copying
+
+@dircategory Emacs misc features
+@direntry
+* etm: (etm).           Drive Emacs workspaces and panes as JSON verbs.
+@end direntry
+
+@titlepage
+@title etm
+@subtitle Drive Emacs workspaces, panes and terminals as JSON verbs
+@subtitle for version @value{VERSION}
+@author David Awad
+@page
+@vskip 0pt plus 1filll
+@insertcopying
+@end titlepage
+
+@contents
+
+@ifnottex
+@node Top
+@top etm
+
+etm drives a running Emacs from outside: its workspaces, panes and
+terminals, as a closed set of JSON verbs.  Think @command{ntm} or
+@command{tmux} robot mode, for Emacs.
+
+This manual is for etm version @value{VERSION}.
+
+@insertcopying
+@end ifnottex
+
+@menu
+* Overview::                    What etm is and how its two halves meet.
+* Installation::                The CLI, the Emacs package, this manual.
+* Quick Start::                 A shell pane, driven from a terminal.
+* Configuration::               Every user option.
+* Workspace Backends::          persp-mode, tabspaces, tab-bar, single.
+* Extension Points::            Replacing etm's defaults, with an example.
+* Verb Reference::              Every verb, its arguments and its data.
+* The Result Envelope::         etm.result/1, error codes, exit codes.
+* Global Flags::                Output and paging flags shared with pwm.
+* Wire Protocol::               What travels over the server socket.
+* Troubleshooting::             Unreachable servers, slow pages, macOS.
+* Concept Index::
+* Function Index::
+* Variable Index::
+
+@detailmenu
+--- The Detailed Node Listing ---
+
+Installation
+
+* The CLI::                     cargo install.
+* The Emacs Package::           MELPA, package-vc-install, straight.
+* Building This Manual::        makeinfo and install-info.
+
+Extension Points
+
+* Pane Identity::               @code{etm-resource-resolver}.
+* Docking::                     @code{etm-layout-dock-function}.
+* Page Types::                  @code{etm-page-types} and page arguments.
+* Doctor Checks::               @code{etm-doctor-functions}.
+* Snapshot Sections::           @code{etm-snapshot-functions}.
+* Event Sinks::                 Where the per-call events go.
+* Workspace Tags::              @code{etm-tag-parameters}.
+* Writing a Backend::           The @code{etm-backend-*} generics.
+* Worked Example::              One configuration using them all.
+
+Verb Reference
+
+* Observation Verbs::           snapshot, capabilities, doctor, events.
+* Workspace Verbs::             ws ls, get, new, switch, rename, kill.
+* Pane Verbs::                  pane ls, new, kill, focus.
+* Pane I/O Verbs::              send, capture, wait.
+* Other Verbs::                 eval, bench, install-elisp, help.
+* Calling Verbs from Lisp::     @code{etm-rpc} and @code{etm-rpc-json}.
+
+@end detailmenu
+@end menu
+
+@node Overview
+@chapter Overview
+@cindex overview
+@cindex two halves
+
+An agent, a script, or you at a shell names a @dfn{verb}; Emacs answers
+with one JSON @dfn{envelope} and a stable exit code.  There are two
+halves:
+
+@table @asis
+@item The @command{etm} CLI (Rust)
+Parses argv into a request, base64-wraps it (so nothing is ever quoted
+as an Emacs Lisp string), and speaks the Emacs server socket protocol
+directly, the one @command{emacsclient} speaks, falling back to
+@samp{emacsclient --eval}.  A snapshot round trip takes about a
+millisecond.
+
+@item The @code{etm} Emacs package (@file{lisp/})
+One entry point, @code{(etm-rpc @var{request-base64})}, dispatching a
+closed verb table.  It loads in @samp{emacs -Q} and needs Emacs 29.1 or
+newer.
+@end table
+
+@cindex workspace
+@cindex pane
+@cindex pane address
+etm's vocabulary is small.  A @dfn{workspace} is whatever the active
+backend calls one: a persp-mode perspective, a tabspaces or tab-bar tab,
+or the one @samp{global} workspace of a session without any
+(@pxref{Workspace Backends}).  A @dfn{pane} is a buffer-shaped resource
+of one workspace: a shell, a running command, a file, a directory tree,
+or a named @dfn{page}.  A pane is addressed
+@samp{@var{workspace}/@var{pane-key}}, where the key is the caller's own
+name for it (@samp{review/sh}, @samp{api/eng.2}); buffer names are only
+labels.
+
+@cindex closed verb table
+The verb table is closed: an unknown verb is a typed usage error, never
+an evaluation.  @code{eval} is the one escape hatch, and it is logged and
+flagged (@pxref{Other Verbs}).  Handlers never signal past the
+dispatcher: a failure is an envelope with @code{ok} false, because the
+Emacs server answers an escaped error by stalling the user's session for
+two seconds.
+
+@cindex next hints
+Every envelope carries @code{next}: the one to three commands that most
+plausibly follow, so a caller reads its next step instead of working it
+out.  Every call also leaves one event in Emacs (@pxref{Event Sinks}),
+whose id the envelope cites, so diagnosing after the fact is a read.
+
+@node Installation
+@chapter Installation
+@cindex installation
+
+etm is two installable pieces.  The CLI is enough on its own: it carries
+a copy of the Emacs package and loads it into the target Emacs on first
+use (@pxref{The CLI}).  Install the Emacs package as well when you want
+to configure etm in your init file or call it from Lisp.
+
+@menu
+* The CLI::                     cargo install.
+* The Emacs Package::           MELPA, package-vc-install, straight.
+* Building This Manual::        makeinfo and install-info.
+@end menu
+
+@node The CLI
+@section The CLI
+@cindex cargo install
+@cindex autoload of the Emacs package
+
+@example
+cargo install etm                 # the CLI, with the elisp bundled
+etm install-elisp ~/.emacs.d/etm  # optional: put the package on disk
+@end example
+
+Emacs must run a server: @kbd{M-x server-start}, or start it as
+@samp{emacs --daemon}.  Pick the server with @option{--socket
+@var{name-or-path}}; without it etm reads @env{ETM_SOCKET}, then
+@env{EMACS_SOCKET_NAME}, then uses @samp{server} in the usual socket
+directory.
+
+@cindex @file{etm.el}, finding
+@vindex ETM_RPC_EL
+You do not have to install the Emacs package.  When the target Emacs has
+not loaded etm, the CLI loads it, from the first of:
+
+@enumerate
+@item
+@option{--rpc-el @var{path}}: @file{etm.el}, its directory, or your own
+configuration file that loads it;
+@item
+@env{ETM_RPC_EL}, the same;
+@item
+the server's own installation, @code{(locate-library "etm")};
+@item
+the copy bundled in the binary, written to
+@file{~/.cache/etm/lisp-@var{version}-@var{hash}/}.
+@end enumerate
+
+@option{--no-autoload} never loads anything; a request to an Emacs
+without etm then fails.
+
+@node The Emacs Package
+@section The Emacs Package
+@cindex MELPA
+@cindex package-vc-install
+@cindex straight.el
+
+The package lives in @file{lisp/} of the repository, with this manual in
+@file{docs/etm.texi}.
+
+@subheading From MELPA
+
+@lisp
+(package-install 'etm)
+@end lisp
+
+@noindent
+The MELPA recipe builds this manual too:
+
+@lisp
+(etm :fetcher github :repo "etm-el/etm"
+     :files (:defaults "docs/etm.texi"))
+@end lisp
+
+@subheading With @code{package-vc-install} (Emacs 29.1 and newer)
+
+@lisp
+(package-vc-install
+ '(etm :url "@value{URL}"
+       :lisp-dir "lisp"
+       :doc "docs/etm.texi"))
+@end lisp
+
+@noindent
+On Emacs 30, @code{use-package} takes the same specification:
+
+@lisp
+(use-package etm
+  :vc (:url "@value{URL}" :lisp-dir "lisp" :doc "docs/etm.texi"))
+@end lisp
+
+@subheading With straight.el
+
+@lisp
+(straight-use-package
+ '(etm :host github :repo "etm-el/etm"
+       :files ("lisp/*.el" "docs/etm.texi")))
+@end lisp
+
+@subheading From a checkout
+
+@lisp
+(add-to-list 'load-path "/path/to/etm/lisp")
+(require 'etm)
+@end lisp
+
+@node Building This Manual
+@section Building This Manual
+@cindex Info manual, building
+@cindex makeinfo
+
+Package managers build the Info file for you.  From a checkout:
+
+@example
+makeinfo --no-split -o docs/etm.info docs/etm.texi
+install-info docs/etm.info docs/dir
+@end example
+
+@noindent
+then add @file{docs/} to @code{Info-additional-directory-list}, and
+@kbd{C-h i} lists ``etm''.  The repository's CI builds the manual and
+fails on any warning.
+
+@node Quick Start
+@chapter Quick Start
+@cindex quick start
+
+Start an Emacs server, then drive it from a terminal:
+
+@example
+$ emacs --daemon
+$ etm ws new review --switch
+$ etm pane new review sh --kind shell --region bottom
+$ etm send review/sh 'make test' --enter
+$ etm wait review/sh --until match:'passed|failed' --timeout 5m
+$ etm capture review/sh --since c1:@dots{}
+@end example
+
+@noindent
+Each answer is one envelope (@pxref{The Result Envelope}).  Off a
+terminal, or with @option{--json}, it is JSON:
+
+@example
+$ etm --json send review/sh 'echo hi' --enter
+@{"schema": "etm.result/1", "ok": true, "verb": "send",
+ "data": @{"addr": "review/sh", "chars": 7, "enter": true,
+          "cursor": "c1:ea29@dots{}:33"@},
+ "rev": null, "warnings": [], "errors": [],
+ "next": ["etm wait review/sh --until idle",
+          "etm capture review/sh --since c1:ea29@dots{}:33",
+          "etm wait review/sh --until match:REGEXP --since c1:ea29@dots{}:33"],
+ "events": ["ev_1a105d65cae0003"]@}
+@end example
+
+@cindex capture cursor
+The @code{cursor} that @code{send} returns marks the pane's end before
+the text went in.  Pass it to @code{capture --since} to read only what
+arrived after it, and to @code{wait --until match:@var{re} --since} to
+match output the command has already printed.  Without @option{--since},
+@code{wait} searches only output that arrives after the wait begins.
+
+A @samp{global} workspace always exists, so the shortest session needs
+no workspace at all:
+
+@example
+$ etm pane new global sh --kind shell
+$ etm send global/sh 'ls' --enter
+$ etm capture global/sh --lines 20
+@end example
+
+@noindent
+Use @samp{etm capabilities} for what this Emacs supports, and
+@samp{etm doctor} when something looks wrong.
+
+@node Configuration
+@chapter Configuration
+@cindex configuration
+@cindex customization group
+
+Every option is in the customization group @code{etm}: @kbd{M-x
+customize-group @key{RET} etm @key{RET}}.  None is needed in a bare
+@samp{emacs -Q}.
+
+@section Workspaces
+
+@defopt etm-workspace-backend
+Which notion of workspace etm drives: @code{auto} (the default),
+@code{persp-mode}, @code{tabspaces}, @code{tab-bar}, @code{single}, or
+the name of a backend you wrote (@pxref{Writing a Backend}).  @code{auto}
+picks the first available backend in
+@code{etm-workspace-backend-candidates} on every request, so turning on
+@code{persp-mode} or @code{tabspaces-mode} later takes effect without a
+restart.
+@end defopt
+
+@defopt etm-workspace-backend-candidates
+The backends @code{auto} tries, in order.  Default:
+@code{(persp-mode tabspaces tab-bar single)}.
+@end defopt
+
+@defopt etm-persp-id-parameter
+The perspective parameter that holds a perspective's stable etm id.
+Default: @code{etm-ws-id}.  Point it at a parameter another package
+already keeps a stable id in, to share that id.
+@end defopt
+
+@defopt etm-tag-parameters
+Which workspace parameter holds each tag a controller mounts a
+workspace with: an alist @code{(@var{tag} . @var{parameter})}.
+@xref{Workspace Tags}.
+@end defopt
+
+@section Panes and layout
+
+@defopt etm-pane-buffer-name-function
+Turns a pane's base label (@samp{*etm:@var{ws}/@var{key}*}) into a new
+buffer's name.  Default: @code{generate-new-buffer-name}.  The name is
+only what a person sees; identity comes from
+@code{etm-resource-resolver}.
+@end defopt
+
+@defopt etm-resource-resolver
+The functions that resolve pane identity, a plist, or @code{nil} for
+etm's own registry.  @xref{Pane Identity}.
+@end defopt
+
+@defopt etm-layout-dock-function
+The function that shows a pane in a side region.  Default:
+@code{etm-layout-dock-side-window}.  @xref{Docking}.
+@end defopt
+
+@defopt etm-side-window-size
+Width or height of a docked pane's side window, as a fraction of the
+frame, for the default dock function.  Default: @code{0.3}.
+@end defopt
+
+@section Pages
+
+@defopt etm-page-types
+Registered page types, an alist @code{(@var{name} . @var{function})}.
+@xref{Page Types}.
+@end defopt
+
+@defopt etm-page-type-functions
+Resolvers for page names @code{etm-page-types} does not list, each
+called with the name and returning a page function or @code{nil}.
+Default: @code{(etm-page-command-type)}, which accepts any interactive
+command of that name.
+@end defopt
+
+@defopt etm-page-delay
+Seconds after @code{pane.new} answers before its page renders.  Default:
+@code{0}.  The render runs on a timer either way, outside the server's
+process filter.
+@end defopt
+
+@defopt etm-page-slow-ms
+A render that took longer than this many milliseconds fails the doctor
+row @samp{etm.pages-responsive}.  Default: @code{2000}.
+@end defopt
+
+@defopt etm-page-stuck-seconds
+A page still rendering after this many seconds fails the doctor row
+@samp{etm.pages}.  Default: @code{60}.
+@end defopt
+
+@section Events, doctor and snapshot
+
+@defopt etm-event-ring-size
+How many events etm's own ring keeps.  Default: @code{200}.
+@end defopt
+
+@defopt etm-event-log-function
+The function that records one event.  Default:
+@code{etm-event-ring-log}.  @xref{Event Sinks}.
+@end defopt
+
+@defopt etm-event-list-function
+The function returning every retained event, oldest first.  Default:
+@code{etm-event-ring-list}.
+@end defopt
+
+@defopt etm-event-functions
+A hook of sinks, each called with every event after it is recorded.
+@end defopt
+
+@defopt etm-doctor-functions
+A hook of functions adding rows to @samp{etm doctor}.
+@xref{Doctor Checks}.
+@end defopt
+
+@defopt etm-snapshot-functions
+A hook of functions adding sections to @samp{etm snapshot}.
+@xref{Snapshot Sections}.
+@end defopt
+
+@section Safety
+
+@defopt etm-allow-eval
+Non-@code{nil} (the default) lets the @code{eval} verb run arbitrary
+forms.  Set it to @code{nil} to refuse them with
+@samp{capability.disabled}.  Anyone who can reach the server socket can
+already evaluate Lisp through @command{emacsclient}; this option only
+closes etm's own door.
+@end defopt
+
+@node Workspace Backends
+@chapter Workspace Backends
+@cindex workspace backend
+@cindex backend
+
+Emacs has several notions of ``workspace'', and none at all in a bare
+session.  etm drives all of them through one protocol, and
+@code{etm-workspace-backend} picks which:
+
+@multitable @columnfractions .17 .33 .50
+@headitem Backend @tab A workspace is @tab Available when
+@item @code{persp-mode}
+@tab a perspective
+@tab @code{persp-mode} is on
+@item @code{tabspaces}
+@tab a tab with its own buffer list
+@tab @code{tabspaces-mode} is on
+@item @code{tab-bar}
+@tab a tab-bar tab
+@tab @code{tab-bar-mode} is on, or the frame has more than one tab
+@item @code{single}
+@tab the one @samp{global} workspace
+@tab always
+@end multitable
+
+@cindex persp-mode
+@noindent
+@strong{persp-mode.}  A workspace is a perspective; its stable id lives
+in the perspective parameter named by @code{etm-persp-id-parameter}.
+persp-mode ignores a daemon's own frame, so @code{ws switch} picks a frame
+persp-mode manages, and fails with @samp{capability.unavailable} when
+there is none (open one with @samp{emacsclient -t} or @samp{-c}).
+
+@cindex tab-bar
+@noindent
+@strong{tab-bar.}  A workspace is a tab of the selected frame.  The
+handle is an id etm stores in the tab itself (its @code{etm-id} entry);
+workspace parameters live in the tab under @code{etm-params}.  Membership
+is the tab's buffer list.  The frame's only tab cannot be killed.
+
+@cindex tabspaces
+@noindent
+@strong{tabspaces.}  The tab-bar backend with tabspaces' notion of
+buffer membership.
+
+@cindex single workspace
+@noindent
+@strong{single.}  One workspace, @samp{global}, holding every buffer.
+@code{ws new}, @code{switch}, @code{rename} and @code{kill} fail with
+@samp{capability.unavailable}; panes work as everywhere else.
+
+@cindex workspace id
+Pane identity keys on the workspace's @emph{id}, not its name, so
+@code{ws rename} keeps every pane of the workspace.
+
+@node Extension Points
+@chapter Extension Points
+@cindex extension points
+
+Each extension point has a default that works in @samp{emacs -Q}; a
+configuration replaces only what it needs.
+
+@menu
+* Pane Identity::               @code{etm-resource-resolver}.
+* Docking::                     @code{etm-layout-dock-function}.
+* Page Types::                  @code{etm-page-types} and page arguments.
+* Doctor Checks::               @code{etm-doctor-functions}.
+* Snapshot Sections::           @code{etm-snapshot-functions}.
+* Event Sinks::                 Where the per-call events go.
+* Workspace Tags::              @code{etm-tag-parameters}.
+* Writing a Backend::           The @code{etm-backend-*} generics.
+* Worked Example::              One configuration using them all.
+@end menu
+
+@node Pane Identity
+@section Pane Identity
+@cindex resolver
+@cindex pane identity
+@cindex registry of panes
+
+A pane @emph{is} the buffer registered under the resource key
+@code{etm-pane:@var{key}} in its workspace's row, so the same key in two
+workspaces is two buffers.  By default etm keeps that registry itself (a
+weak hash table from @code{(@var{workspace-id} . @var{key})} to buffer).
+A configuration with its own buffer namespace hands etm its functions
+instead, through @code{etm-resource-resolver}, a plist whose keys each
+replace one step:
+
+@table @code
+@item :peek (@var{key} @var{ws})
+The live buffer registered as @var{key} in @var{ws}, or @code{nil}.
+@item :get (@var{key} @var{create} @var{ws})
+That buffer, made by calling @var{create} (no arguments) and registered
+when absent.
+@item :replace (@var{old} @var{new})
+Register @var{new} in @var{old}'s row; return @var{new}.  Page panes use
+this when the page's buffer takes over from its placeholder.
+@item :buffer-id (@var{buffer})
+A stable id of @var{buffer} as an object.  Capture cursors key on it.
+@item :owned (@var{ws})
+Live buffers owned by @var{ws}.
+@item :registered-p (@var{buffer})
+Non-@code{nil} when @var{buffer} is registered anywhere.
+@item :snapshot ()
+A plist describing the registry, shown as @code{namespace} in
+@samp{etm snapshot}.
+@end table
+
+@var{key} is a symbol and @var{ws} an @code{etm-ws} structure (accessors
+@code{etm-ws-name}, @code{etm-ws-handle} and @code{etm-ws-id}).  A step
+left out keeps etm's default, which is also callable:
+
+@defun etm-resource-default-peek key ws
+@defunx etm-resource-default-get key create ws
+@defunx etm-resource-default-replace old new
+@defunx etm-resource-default-buffer-id buffer
+@defunx etm-resource-default-owned ws
+@defunx etm-resource-default-snapshot
+etm's own registry, used for every step @code{etm-resource-resolver}
+does not name.
+@end defun
+
+@noindent
+etm calls the resolver through these:
+
+@defun etm-resource-peek key ws
+@defunx etm-resource-get key create ws
+@defunx etm-resource-replace old new
+@defunx etm-resource-buffer-id buffer
+@defunx etm-resource-owned ws
+@defunx etm-resource-registered-p buffer
+@defunx etm-resource-snapshot
+The resolver's step, or etm's default.
+@end defun
+
+@vindex etm-pane-key
+@vindex etm-pane-kind
+@vindex etm-pane-region
+@vindex etm-pane-proxy
+Whatever the resolver, a pane buffer carries the buffer-local tags
+@code{etm-pane-key}, @code{etm-pane-kind}, @code{etm-pane-region} and
+@code{etm-pane-proxy}, and a window showing it has the window parameter
+@code{etm-pane}.
+
+@node Docking
+@section Docking
+@cindex docking
+@cindex region
+
+A pane may ask for a @dfn{region}: @code{main}, @code{left},
+@code{right}, @code{bottom} or @code{top}.  @code{main} is the ordinary
+window area.  The side regions go through
+@code{etm-layout-dock-function}, called with the buffer and the region
+as a symbol, returning the window it used (or @code{nil}).  @code{top}
+docks at the bottom, with a @samp{degraded.region_top} warning.  A
+region asked for in a workspace that is not shown applies on the next
+@code{pane focus} (@samp{layout.deferred}).
+
+@defun etm-layout-dock-side-window buffer region
+The default: @code{display-buffer-in-side-window} at @var{region}, sized
+by @code{etm-side-window-size}.
+@end defun
+
+@node Page Types
+@section Page Types
+@cindex page
+@cindex page type
+@findex etm-page-args
+
+A @code{page} pane shows a named view: a function that displays a
+buffer (a dashboard, an agenda, a board).  @samp{--page @var{name}}
+resolves through @code{etm-page-types}, then the resolvers in
+@code{etm-page-type-functions}; with neither it is
+@samp{capability.unavailable}.
+
+The function is called interactively when it is a command, and with no
+arguments otherwise.  A page function that needs arguments declares how
+to get them from the workspace: its symbol property @code{etm-page-args}
+holds a function of the plist @code{(:subject @var{s} :dir @var{d})}
+returning the argument list.
+
+@cindex page rendering
+Running a page inside @code{pane.new} would run it inside the server's
+process filter, where a page that prompts, or fetches synchronously,
+wedges the whole server.  So @code{pane.new} answers at once with a
+placeholder buffer as the pane (@code{page_state} @code{"rendering"}),
+and the page renders on a timer.  The render binds
+@code{inhibit-interaction}, so a page that would prompt fails as
+@samp{page.needs_input}; one that shows no buffer fails as
+@samp{page.no_buffer}.  When it succeeds, the page's buffer takes over
+the pane (registry row, windows, tags) and @code{page_state} becomes
+@code{"ready"}, with @code{page_ms}.  A failed render leaves the
+placeholder holding the error.
+
+@defun etm-page-command-type name
+The default resolver: the interactive command named @var{name}, or
+@code{nil}.
+@end defun
+
+@defun etm-page-function name
+The page function for @var{name}; signals @samp{capability.unavailable}
+when there is none.
+@end defun
+
+@defun etm-page-names
+The names registered in @code{etm-page-types}, as @samp{etm
+capabilities} lists them under @code{pages}.
+@end defun
+
+@node Doctor Checks
+@section Doctor Checks
+@cindex doctor
+
+@samp{etm doctor} runs etm's own probes (@samp{etm.server},
+@samp{etm.json}, @samp{etm.workspaces}, @samp{etm.panes-registered},
+@samp{etm.pages}, @samp{etm.pages-responsive}), then every function in
+@code{etm-doctor-functions}.  Each is called with no arguments and
+returns a list of rows, each a plist @code{(:check @var{name} :status
+@var{status} :hint @var{text})}, @var{status} being @code{pass},
+@code{fail} or @code{skip} (a symbol or a string).  A failing row
+becomes a @samp{doctor.@var{check}} warning on the envelope and makes
+@code{healthy} false.  A function that signals becomes a failing row
+named after it.
+
+@defun etm-probe check ok hint &optional skip
+One row: @var{check} passes when @var{ok}, else fails, or skips when
+@var{skip}.
+@end defun
+
+@node Snapshot Sections
+@section Snapshot Sections
+@cindex snapshot sections
+
+Each function in @code{etm-snapshot-functions} is called with no
+arguments and returns a plist merged into @samp{etm snapshot}'s data.
+A key etm already uses keeps etm's value.
+
+@node Event Sinks
+@section Event Sinks
+@cindex events
+@cindex event sink
+@cindex event ring
+
+Every call leaves one event (a quiet @code{wait} poll excepted), and
+the envelope's @code{events} cites its id.  An event is a plist with at
+least @code{:id} (a string sorting by time, @samp{ev_@dots{}}),
+@code{:ts} (float seconds), @code{:level} (@code{debug}, @code{info},
+@code{warn} or @code{error}) and @code{:message}.  Successful calls log
+at @code{debug}, typed errors and @code{eval} at @code{info}, and only
+@samp{internal.error} (a handler bug) at @code{warn}.
+
+@code{etm-event-log-function} records an event (called with
+@var{level} and @var{message}, returning the plist) and
+@code{etm-event-list-function} returns them all, oldest first; replace
+both to keep events in your own store.  To observe events without
+replacing the store, add a sink to @code{etm-event-functions}.
+
+@defun etm-event-log level format-string &rest args
+Record one event at @var{level}, its message formatted from
+@var{format-string} and @var{args}; run the sinks; return the plist.
+Your own code may log through it too.
+@end defun
+
+@defun etm-event-list
+Every retained event, oldest first.
+@end defun
+
+@defun etm-event-ring-log level message
+@defunx etm-event-ring-list
+The default store: a ring of @code{etm-event-ring-size} events.
+@end defun
+
+@node Workspace Tags
+@section Workspace Tags
+@cindex tags
+@cindex managed workspace
+
+A controller that mounts workspaces through etm tags them, and reads
+the tags back from the live session instead of keeping its own
+database.  @code{etm-tag-parameters} names the workspace parameter each
+tag lives in:
+
+@table @code
+@item tag
+The name the workspace was mounted under.  A workspace with this tag is
+@code{managed} in @samp{ws ls}.
+@item subject
+What the workspace is about (@samp{ws new --subject}).
+@item spec
+The revision it was rendered from (@samp{ws new --spec}).
+@item owner
+The session that created it (@samp{ws new --owner}); set once.
+@item root
+Its directory, where new panes start.
+@end table
+
+@noindent
+Point them at other parameter names to share tags with an existing
+setup.
+
+@defun etm-tag-parameter tag
+The workspace parameter for @var{tag}.
+@end defun
+
+@node Writing a Backend
+@section Writing a Backend
+@cindex writing a backend
+@cindex backend protocol
+
+A backend is a set of @code{cl-defmethod}s on the @code{etm-backend-*}
+generic functions, specialized on @code{(eql '@var{name})}.  Every
+method takes the backend symbol first; a @var{handle} is whatever the
+backend uses to reach a workspace (a perspective object, a tab id).
+
+@deffn {Generic Function} etm-backend-available-p backend
+Non-@code{nil} when @var{backend} can be used now.
+@end deffn
+@deffn {Generic Function} etm-backend-list backend
+Handles of every workspace, in the backend's own order.
+@end deffn
+@deffn {Generic Function} etm-backend-current backend
+The handle of the selected frame's workspace.
+@end deffn
+@deffn {Generic Function} etm-backend-name backend handle
+Its display name.
+@end deffn
+@deffn {Generic Function} etm-backend-id backend handle
+Its stable id, which must survive renames.
+@end deffn
+@deffn {Generic Function} etm-backend-get backend name
+The handle named @var{name}, or @code{nil}.  The default searches
+@code{etm-backend-list}.
+@end deffn
+@deffn {Generic Function} etm-backend-mutable-p backend
+Non-@code{nil} (the default) when the backend can create, switch,
+rename and kill workspaces.
+@end deffn
+@deffn {Generic Function} etm-backend-real-p backend handle
+Non-@code{nil} (the default) unless @var{handle} cannot be renamed or
+killed.
+@end deffn
+@deffn {Generic Function} etm-backend-new backend name
+Create workspace @var{name} without showing it; return its handle.
+@end deffn
+@deffn {Generic Function} etm-backend-switch backend handle
+Show it in the selected frame.
+@end deffn
+@deffn {Generic Function} etm-backend-rename backend handle new-name
+Rename it.
+@end deffn
+@deffn {Generic Function} etm-backend-kill backend handle
+Remove it; its buffers stay alive (etm reaps pane buffers itself).
+@end deffn
+@deffn {Generic Function} etm-backend-buffers backend handle
+The buffers that belong to it.
+@end deffn
+@deffn {Generic Function} etm-backend-add-buffer backend handle buffer
+Make @var{buffer} a member.  The default does nothing.
+@end deffn
+@deffn {Generic Function} etm-backend-parameter backend handle param
+@deffnx {Generic Function} etm-backend-set-parameter backend handle param value
+Read and write a parameter stored on the workspace, where tags live.
+@end deffn
+
+@noindent
+Add the backend's name to @code{etm-workspace-backend-candidates} for
+@code{auto} to find it, or set @code{etm-workspace-backend} to it.
+
+@defun etm-backend
+The backend symbol in effect for this request.
+@end defun
+
+@defun etm-backend-require-available backend
+Signal @samp{capability.unavailable} unless @var{backend} is usable now.
+@end defun
+
+@node Worked Example
+@section Worked Example
+@cindex worked example
+@cindex example configuration
+
+This configuration keeps etm's own registry and backends, and uses the
+other extension points: docked panes open in the direction asked for
+rather than in side windows, two page types are registered, one doctor
+row is added, and every event is appended to a JSON-lines file.
+
+@lisp
+(require 'etm)
+
+;; Docking: an ordinary window in the region's direction.
+(setq etm-layout-dock-function
+      (lambda (buffer region)
+        (display-buffer
+         buffer `(display-buffer-in-direction (direction . ,region)))))
+
+;; Pages: a command, and a function that takes the workspace's root.
+(add-to-list 'etm-page-types '("agenda" . org-agenda-list))
+
+(defun my-project-notes (dir)
+  "Show NOTES.org of DIR."
+  (find-file (expand-file-name "NOTES.org" dir)))
+(put 'my-project-notes 'etm-page-args
+     (lambda (ws) (list (plist-get ws :dir))))
+(add-to-list 'etm-page-types '("notes" . my-project-notes))
+
+;; Doctor: one extra row.
+(defun my-etm-doctor-git ()
+  "Doctor row: git is on `exec-path'."
+  (list (list :check "my.git"
+              :status (if (executable-find "git") 'pass 'fail)
+              :hint "git on exec-path (cmd panes run it)")))
+(add-hook 'etm-doctor-functions #'my-etm-doctor-git)
+
+;; Events: append every event to a file as it happens.
+(defun my-etm-event-to-file (event)
+  "Append EVENT to ~/etm-events.jsonl."
+  (let ((coding-system-for-write 'utf-8))
+    (write-region
+     (concat (json-serialize
+              (list :id (plist-get event :id)
+                    :ts (plist-get event :ts)
+                    :level (symbol-name (plist-get event :level))
+                    :message (plist-get event :message)))
+             "\n")
+     nil (expand-file-name "~/etm-events.jsonl") t 'silent)))
+(add-hook 'etm-event-functions #'my-etm-event-to-file)
+@end lisp
+
+@noindent
+Then, from a shell:
+
+@example
+$ etm ws new api --switch
+$ etm pane new api notes --kind page --page notes --path ~/src/api --region right
+$ etm pane ls api --fields addr,kind,page_state
+$ etm doctor
+$ tail -3 ~/etm-events.jsonl
+@end example
+
+@node Verb Reference
+@chapter Verb Reference
+@cindex verbs
+
+Each verb below is shown as the CLI spells it.  Its name in the
+envelope (and on the wire) is dotted: @samp{etm ws new} is
+@code{ws.new}.  @samp{etm capabilities} lists the table this Emacs
+answers, with each verb's mode (@code{read} or @code{write}).  The
+@option{--json} examples are trimmed to the interesting fields.
+
+@menu
+* Observation Verbs::           snapshot, capabilities, doctor, events.
+* Workspace Verbs::             ws ls, get, new, switch, rename, kill.
+* Pane Verbs::                  pane ls, new, kill, focus.
+* Pane I/O Verbs::              send, capture, wait.
+* Other Verbs::                 eval, bench, install-elisp, help.
+* Calling Verbs from Lisp::     @code{etm-rpc} and @code{etm-rpc-json}.
+@end menu
+
+@node Observation Verbs
+@section Observation Verbs
+
+@table @asis
+@item @samp{etm snapshot [--fields @var{a},@var{b}]}
+@cindex snapshot
+The whole session in one read: @code{emacs} (version, pid, daemon,
+server), @code{backend}, @code{current} workspace, @code{workspaces},
+@code{panes}, the selected frame's @code{windows}, @code{namespace}
+(the resolver's registry), the last ten @code{events}, plus any
+@code{etm-snapshot-functions} sections.  @option{--fields} keeps only
+the named top-level keys.
+
+@item @samp{etm capabilities}
+@cindex capabilities
+Self-description: @code{verbs} (each with @code{mode} and
+@code{summary}), @code{planned} verbs, pane @code{kinds}, @code{regions},
+shell @code{backends}, the @code{workspaces} backend in effect and the
+candidates, the dock function, registered @code{pages}, whether
+@code{eval} is allowed, and the CLI's @code{global_flags} and per-verb
+@code{modifiers}.
+
+@item @samp{etm doctor}
+@cindex doctor
+Invariant probes.  @xref{Doctor Checks}.
+
+@example
+@{"ok": true, "verb": "doctor",
+ "data": @{"healthy": true, "rows": [
+   @{"check": "etm.server", "status": "pass",
+    "hint": "Emacs server running (what the etm CLI connects to)"@},
+   @{"check": "etm.workspaces", "status": "skip",
+    "hint": "workspace backend: single (single = one global workspace)"@},
+   @dots{}]@}@}
+@end example
+
+@item @samp{etm events [--since @var{t}|@var{event-id}] [--limit @var{n}] [--offset @var{n}]}
+@cindex events verb
+Events, oldest first, after @var{t} (epoch seconds) or after an event
+id; at most @var{n} (default 50), the newest kept.  @option{--offset}
+skips the newest @var{n}.  @code{data} is @code{events},
+@code{dropped} (how many older ones the limit left out) and
+@code{next_since}, the id to pass as the next @option{--since}.
+@end table
+
+@node Workspace Verbs
+@section Workspace Verbs
+@cindex workspace verbs
+
+@table @asis
+@item @samp{etm ws ls [--limit @var{n}] [--offset @var{n}]}
+Every workspace, as records:
+
+@example
+@{"ok": true, "verb": "ws.ls",
+ "data": [@{"name": "global", "id": "global", "current": true,
+           "managed": false, "subject": null, "tag": null, "spec": null,
+           "owner": null, "root": null, "panes": 0@}],
+ "rev": "sha1:62f7fd6a0da68225"@}
+@end example
+
+@item @samp{etm ws get [@var{w}]}
+One workspace (default: the current one) with its @code{pane_list}.
+
+@item @samp{etm ws new @var{w} [--subject @var{s}] [--switch] [--spec @var{r}] [--owner @var{o}] [--adopt @var{from}]}
+@cindex idempotent
+Create workspace @var{w} without showing it (@option{--switch} shows
+it).  Idempotent: an existing @var{w} is returned with @code{created}
+false.  @option{--subject}, @option{--spec} and @option{--owner} set
+those tags (@pxref{Workspace Tags}); the owner is never replaced.
+@option{--adopt @var{from}} takes over an existing untagged workspace
+as @var{w} instead: it is renamed and tagged, and its panes keep their
+keys.  A name may not contain @samp{/}.
+
+@item @samp{etm ws switch @var{w}}
+Show @var{w} in the selected frame.
+
+@item @samp{etm ws rename @var{w} @var{name}}
+Relabel @var{w}.  Its id, and so every pane, is unchanged.
+@samp{conflict.exists} when @var{name} is taken.
+
+@item @samp{etm ws kill @var{w}}
+Kill @var{w}'s pane buffers (except those shown outside it), then the
+workspace.
+@end table
+
+@node Pane Verbs
+@section Pane Verbs
+@cindex pane verbs
+@cindex pane kinds
+
+@table @asis
+@item @samp{etm pane ls [@var{w}|--all] [--limit @var{n}] [--offset @var{n}]}
+The panes of @var{w} (default: the current workspace), or of every
+workspace.  A pane record:
+
+@example
+@{"addr": "global/sh", "ws": "global", "ws_id": "global", "key": "sh",
+ "kind": "shell", "region": null, "buffer": "*etm:global/sh*",
+ "buffer_id": "ea2998841d0afd589e96536b00e918f9", "mode": "eshell-mode",
+ "process": null, "pid": null, "proxy": null, "running": false,
+ "visible": false, "size": 47, "idle_ms": 3019,
+ "cursor": "c1:ea2998841d0afd589e96536b00e918f9:48"@}
+@end example
+
+@noindent
+A page pane adds @code{page_state}, @code{page_ms} and
+@code{page_error}.
+
+@item @samp{etm pane new @var{w} @var{key} --kind @var{kind} [--region @var{r}] [--path @var{p}] [--cmd @var{c}] [--page @var{name}] [--backend @var{b}]}
+Create pane @var{key} in @var{w}.  Idempotent: an existing pane of the
+same kind is returned with @code{created} false; the same key with
+another kind is @samp{conflict.kind_mismatch}.  A pane starts in
+@option{--path}, else the workspace's root, else @file{~}.  Kinds:
+
+@table @code
+@item shell
+An interactive shell: eshell, or eat with @option{--backend eat}.
+@item cmd
+A long-running command, @option{--cmd}, in comint; @option{--backend
+eat} runs it in a terminal (comint with a @samp{degraded.eat_unavailable}
+warning when eat is not installed).
+@item editor
+The file at @option{--path}, as an indirect buffer of its own, so two
+workspaces never share one pane buffer.
+@item tree
+A fresh Dired buffer of the directory.
+@item page
+A registered page, @option{--page @var{name}} (@pxref{Page Types}).
+@end table
+
+@noindent
+@code{agent} is refused as @samp{capability.unsupported_kind}: run an
+agent's CLI as a @code{cmd} pane.
+
+@item @samp{etm pane kill @var{addr}}
+Kill the pane, and its process without asking.
+
+@item @samp{etm pane focus @var{addr}}
+Switch to the pane's workspace and select a window showing it, docking
+it in its region when it has one.
+@end table
+
+@node Pane I/O Verbs
+@section Pane I/O Verbs
+@cindex send
+@cindex capture
+@cindex wait
+
+@table @asis
+@item @samp{etm send @var{addr} @var{text}|- [--enter]}
+Type @var{text} (@samp{-} reads standard input) into a terminal pane:
+eshell, eat, vterm, comint, term, or any buffer with a process.
+@option{--enter} submits it.  @samp{pane.not_terminal} for a pane with
+neither.  @code{data.cursor} is the pane's end before the text went in.
+
+@item @samp{etm capture @var{addr} [--since @var{cursor}] [--lines @var{n}] [--max-chars @var{n}]}
+The pane's text after @var{cursor} (default: from the start), cut to the
+last @var{n} lines and the last @var{n} characters (default 262144), and
+the @code{cursor} after it:
+
+@example
+@{"ok": true, "verb": "capture",
+ "data": @{"addr": "global/sh", "text": "~ $ echo hi\nhi\n~ $ ",
+          "from": 1, "to": 48, "truncated": true,
+          "cursor": "c1:ea2998841d0afd589e96536b00e918f9:48"@}@}
+@end example
+
+@cindex cursor reset
+A cursor from another buffer object (the pane was recreated), or past
+the end (the buffer was cleared), restarts from the beginning with a
+@samp{capture.cursor_reset} warning.
+
+@item @samp{etm wait @var{addr} --until idle|exit|match:@var{re} [--timeout @var{dur}] [--idle-ms @var{n}] [--since @var{cursor}] [--poll-ms @var{n}]}
+Block until the condition holds, or fail with @samp{wait.timeout} (exit
+7) after @var{dur} (default 30s).  @code{idle}: no change for
+@option{--idle-ms} (default 1000).  @code{exit}: no live foreground
+process, with @code{exit_status}.  @code{match:@var{re}}: the Emacs
+regexp @var{re} matches output after @option{--since} (default: the end
+when the wait began), with @code{match} and the @code{cursor} after it.
+The CLI polls every @option{--poll-ms} with a zero timeout, so Emacs is
+never blocked; polls that decide nothing leave no event.  The timeout
+envelope still carries the @code{cursor}:
+
+@example
+@{"ok": false, "verb": "wait",
+ "data": @{"addr": "global/sh", "until": "match:hi", "elapsed_ms": 1961,
+          "cursor": "c1:ea2998841d0afd589e96536b00e918f9:48"@},
+ "errors": [@{"code": "wait.timeout",
+             "msg": "`match:hi` not met for global/sh within 2.0s",
+             "hint": null, "surface": "emacs", "retryable": true@}]@}
+@end example
+@end table
+
+@node Other Verbs
+@section Other Verbs
+@cindex eval
+@cindex escape hatch
+
+@table @asis
+@item @samp{etm eval @var{form}}
+The escape hatch: evaluate @var{form} and return its printed
+@code{value}.  It is logged as an @code{info} event, carries an
+@samp{eval.escape_hatch} warning, and is never offered in @code{next}.
+Prefer a verb; ask for one when none fits.  @code{etm-allow-eval} turns
+it off.
+
+@item @samp{etm bench [--n @var{n}]}
+@cindex bench
+Time @var{n} (default 50) snapshot round trips: @code{p50_ms},
+@code{p95_ms} and the rest.
+
+@item @samp{etm install-elisp @var{dir}}
+Write the bundled Emacs package into @var{dir}.
+
+@item @samp{etm help}, @samp{etm --help}
+The verbs and flags in brief, pointing here.  @samp{etm --version}
+prints the version.
+@end table
+
+@node Calling Verbs from Lisp
+@section Calling Verbs from Lisp
+@cindex calling from Lisp
+
+@defun etm-rpc request-base64
+The entry point the CLI calls: @var{request-base64} is base64 of UTF-8
+JSON (@pxref{Wire Protocol}); the value is base64 of the envelope.
+Never signals.
+@end defun
+
+@defun etm-rpc-json request-json
+The same call with plain JSON strings, for callers inside Emacs:
+
+@lisp
+(etm-rpc-json "@{\"v\":1,\"verb\":\"ws.ls\",\"args\":@{@}@}")
+@end lisp
+@end defun
+
+@defun etm-dispatch request
+Run @var{request}, a parsed plist (@code{:v}, @code{:verb},
+@code{:args}), through the verb table; return the envelope as a plist.
+@end defun
+
+@defvar etm-verbs
+The closed verb table: @code{(@var{verb} @var{handler} @var{mode}
+@var{summary})} entries.
+@end defvar
+
+@node The Result Envelope
+@chapter The Result Envelope
+@cindex envelope
+@cindex etm.result/1
+
+Every answer is one JSON object, schema @code{etm.result/1}:
+
+@table @code
+@item schema
+Always @code{"etm.result/1"}.
+@item ok
+@code{true}, or @code{false} with at least one entry in @code{errors}.
+@item verb
+The dotted verb.
+@item data
+The verb's answer; on failure, partial data or @code{null}.
+@item rev
+For @code{snapshot}, @code{ws.ls} and @code{pane.ls}: a digest of the
+observed workspaces and panes (@samp{sha1:@dots{}}), so a caller can tell
+whether anything changed between two reads.  Otherwise @code{null}.
+@item warnings
+Entries @code{@{code, msg, @dots{}@}}: something worked, but not quite as
+asked.
+@item errors
+Entries @code{@{code, msg, hint, surface, retryable@}}.
+@item next
+At most three commands that plausibly follow.
+@item events
+The id of the event this call left, when it left one.
+@item elapsed_ms
+Time spent inside Emacs.
+@end table
+
+@cindex error codes
+@cindex exit codes
+Error codes are dotted, and their family picks the exit code:
+
+@multitable @columnfractions .12 .40 .48
+@headitem Exit @tab Means @tab Codes
+@item 0 @tab ok @tab
+@item 1 @tab failure @tab any other code: @samp{capability.*}, @samp{conflict.*}, @samp{page.*}, @samp{pane.not_terminal}, @samp{transport.timeout}, @samp{internal.error}
+@item 2 @tab usage @tab @samp{usage.*}
+@item 3 @tab not found @tab @samp{not_found.*}
+@item 4 @tab rev conflict @tab @samp{rev.*}
+@item 5 @tab unreachable @tab @samp{*.unreachable}, such as @samp{driver.unreachable}
+@item 6 @tab partial apply @tab @samp{apply.partial}
+@item 7 @tab wait timeout @tab @samp{wait.timeout}
+@end multitable
+
+The codes etm itself uses:
+
+@table @samp
+@item usage.argv
+The command line did not parse (the CLI's own check).
+@item usage.bad_request
+@itemx usage.protocol
+@itemx usage.unknown_verb
+The request was not base64 UTF-8 JSON, spoke another protocol version,
+or named no verb in the table.
+@item usage.missing_arg
+@itemx usage.bad_arg
+@itemx usage.bad_addr
+@itemx usage.bad_cursor
+@itemx usage.bad_target
+An argument is missing or malformed, or names something the verb cannot
+act on (the frame's only tab, a perspective persp-mode does not manage).
+@item not_found.workspace
+@itemx not_found.pane
+Nothing at that name or address.
+@item conflict.exists
+@itemx conflict.kind_mismatch
+@itemx conflict.already_managed
+The name is taken, the key exists with another kind, or the workspace
+to adopt is already tagged.
+@item capability.unavailable
+@itemx capability.unsupported_kind
+@itemx capability.disabled
+The backend, page, shell backend or verb is not available here.
+@item pane.not_terminal
+@code{send} to a pane with no terminal or process.
+@item wait.timeout
+The condition did not hold in time.
+@item driver.unreachable
+No Emacs server answered at the socket.
+@item transport.timeout
+@itemx transport.protocol
+@itemx transport.emacs_error
+The server answered too slowly (retryable), garbled, or with an error of
+its own.
+@item install.failed
+@code{install-elisp} could not write the package.
+@item internal.error
+A handler bug; the message says what signaled.
+@end table
+
+@noindent
+Warnings you may see: @samp{capture.cursor_reset}, @samp{layout.deferred},
+@samp{layout.failed}, @samp{degraded.region_top},
+@samp{degraded.layout_unavailable}, @samp{degraded.eat_unavailable},
+@samp{eval.escape_hatch}, @samp{doctor.@var{check}},
+@samp{flag.ignored} and @samp{flag.deprecated}.
+
+@node Global Flags
+@chapter Global Flags
+@cindex global flags
+@cindex pwm, shared flags
+
+These flags are accepted anywhere on the command line.  They are one
+flag table, shared with etm's sibling CLI @command{pwm}, which drives
+tmux and Emacs together and speaks the same envelope shape.  Both list
+the table as @code{global_flags} in @samp{capabilities}.  The spellings
+are @command{ntm}'s.
+
+@table @option
+@item --json
+The JSON envelope.  The default when standard output is not a terminal.
+@item --robot-format=json|toon|markdown|text
+@cindex TOON
+@code{toon} states a uniform list once as @samp{key[@var{n}]@{a,b@}:}
+plus comma-separated rows; @code{markdown} renders lists as tables;
+@code{text} is the human view, the default on a terminal.
+@item --robot-markdown
+The same as @option{--robot-format=markdown}.
+@item --fields @var{a},@var{b}
+Keep only these keys of @code{data} (of each item, when @code{data} is a
+list).
+@item --brief
+Summary only: every list in @code{data} becomes its count.
+@item --verbose
+Trace the parsed flags and the timing to standard error.
+@item --no-color
+No ANSI color.  None is emitted anyway, and @env{NO_COLOR} is honored.
+@end table
+
+@cindex modifiers
+@cindex paging
+The next five are @dfn{modifiers}: a verb without the notion answers
+with a @samp{flag.ignored} warning instead of failing, and each verb's
+@code{modifiers} in @samp{etm capabilities} say which it honors.
+
+@table @option
+@item --limit @var{n}
+@itemx --offset @var{n}
+Page a list verb (@code{ws ls}, @code{pane ls}, @code{events});
+aliases @option{--robot-limit} and @option{--robot-offset}.  A paged
+answer's @code{data} is @code{@{"items": [@dots{}], "pagination":
+@{limit, offset, count, total, has_more@}, "next_offset": @var{n}@}},
+@code{next_offset} being @code{null} on the last page.  Without them,
+@code{data} stays the bare list.  @code{events} pages from the newest
+end.
+@item --since @var{t}
+@code{events}: a time (RFC 3339, epoch seconds, or an age like
+@samp{10m}) or an event id.  @code{capture} and @code{wait}: a cursor.
+@item --timeout @var{dur}
+@code{wait}: seconds, or @samp{500ms}, @samp{30s}, @samp{5m}, @samp{1h}.
+@item --dry-run
+Print the request that would be sent, without contacting Emacs.
+@end table
+
+The old spellings still work, with a @samp{flag.deprecated} warning
+naming the new one: @option{--format json} (@option{--json}),
+@option{--format compact} (@option{--robot-format=toon}),
+@option{--format text} and @option{--format pretty}
+(@option{--robot-format=text}).
+
+@cindex transport flags
+etm's own flags pick the Emacs and the transport:
+
+@table @option
+@item --socket @var{name-or-path}
+@itemx -s @var{name-or-path}
+The server socket.  Default: @env{ETM_SOCKET}, else
+@env{EMACS_SOCKET_NAME}, else @samp{server}.
+@item --transport auto|socket|emacsclient
+@code{socket} speaks the server protocol directly; @code{emacsclient}
+spawns @command{emacsclient --eval}; @code{auto} (the default) tries the
+socket first.
+@item --emacsclient @var{path}
+The @command{emacsclient} the fallback runs.
+@item --rpc-el @var{path}
+The elisp to autoload (@pxref{The CLI}).
+@item --no-autoload
+Never load etm into Emacs.
+@item --io-timeout @var{s}
+One round trip's budget (default 30 seconds), for the whole exchange,
+not each read.
+@end table
+
+@node Wire Protocol
+@chapter Wire Protocol
+@cindex wire protocol
+@cindex protocol
+
+Any client that can reach the Emacs server can speak etm; the CLI is one
+such client.
+
+@cindex request
+A @dfn{request} is UTF-8 JSON:
+
+@example
+@{"v": 1, "verb": "pane.new",
+ "args": @{"ws": "review", "key": "sh", "kind": "shell"@}@}
+@end example
+
+@noindent
+It is sent base64-wrapped as the form @code{(etm-rpc
+"@var{base64}")}, and the reply is base64 of the envelope, so neither
+direction ever carries an Emacs Lisp string that needs quoting, and the
+reply survives the server's framing byte for byte.
+
+@cindex etm-rpc-unloaded
+When @code{etm-rpc} is not defined, the form answers the symbol
+@code{etm-rpc-unloaded}; the CLI then resends it with a @code{load} in
+front (@pxref{The CLI}), with a budget of at least 30 seconds, because a
+first load into a large configuration can be slow.  An Emacs that has
+already loaded etm costs no extra round trip.
+
+@cindex cursor format
+A capture @dfn{cursor} is @samp{c1:@var{buffer-id}:@var{position}}: the
+buffer's stable id (@code{etm-resource-buffer-id}) and a character
+position.  Treat it as opaque, and pass it back exactly as received.
+
+@defun etm-parse-addr addr
+Split a pane address into @code{(@var{workspace} . @var{key})}, on the
+@emph{last} slash, so workspace names may themselves contain one when
+they did not come from @code{ws new}.  @var{workspace} is @code{nil} for
+a bare key (the current workspace).  Keys match
+@samp{[A-Za-z0-9][A-Za-z0-9._:+-]*}.
+@end defun
+
+@defun etm-cursor-format buffer-id pos
+@defunx etm-cursor-parse cursor
+Build and parse capture cursors.
+@end defun
+
+@node Troubleshooting
+@chapter Troubleshooting
+@cindex troubleshooting
+
+@table @asis
+@item Exit 5, @samp{driver.unreachable}
+@cindex unreachable server
+No server answered at the socket.  Start one (@kbd{M-x server-start} or
+@samp{emacs --daemon}) and check the name: @samp{etm --socket
+@var{name} doctor}.  A daemon started as @samp{emacs --daemon=foo}
+listens at @samp{foo}.
+
+@item The first call is slow
+@cindex first call
+@cindex load time
+The target Emacs had not loaded etm, so the first request loaded it,
+which in a large configuration can take seconds.  Later calls do not
+pay it.  To remove the wait, load etm at startup:
+
+@lisp
+(add-hook 'emacs-startup-hook (lambda () (require 'etm)))
+@end lisp
+
+@noindent
+A caller with a short budget of its own should allow for this, or call
+@samp{etm doctor} once as a warm-up.
+
+@item @samp{transport.timeout}
+@cindex slow verbs
+Emacs answered nothing within @option{--io-timeout}.  The server runs
+requests one at a time inside Emacs's command loop, so a busy or
+prompting Emacs answers late.  Look for a minibuffer prompt in the
+target frame.  The error is retryable.
+
+@item A page pane stays @code{rendering}, or Emacs stops answering while one opens
+@cindex slow pages
+@cindex page stuck
+Pages render on a timer, after @code{pane.new} has answered, but a
+render that blocks still blocks Emacs while it runs.  @samp{etm doctor}
+names the culprit: @samp{etm.pages} lists pages that failed or are still
+rendering after @code{etm-page-stuck-seconds}, and
+@samp{etm.pages-responsive} lists pages whose render took longer than
+@code{etm-page-slow-ms}.  Make such a page asynchronous (draw first,
+fetch on a timer), or give a page that prompts its arguments through
+@code{etm-page-args} (@pxref{Page Types}).
+
+@item @samp{os error 22} (EINVAL) on macOS
+@cindex macOS
+@cindex EINVAL
+macOS refuses to set a read timeout on a socket whose peer has already
+closed it, and Emacs answers and hangs up quickly.  etm treats that
+EINVAL as ``the reply is complete'' and reads the rest, so the error
+should never reach you.  If it does, you are running an older etm;
+upgrade, or pass @option{--transport emacsclient} meanwhile.
+
+@item @code{ws switch} fails under persp-mode in a daemon
+persp-mode ignores the daemon's own frame.  Open a client frame
+(@samp{emacsclient -t} or @samp{-c}) first.
+
+@item @code{ws new} fails with @samp{capability.unavailable}
+The @code{single} backend is in effect: turn on @code{tab-bar-mode},
+@code{tabspaces-mode} or @code{persp-mode}, or set
+@code{etm-workspace-backend}.  @samp{etm capabilities} names the
+backend in @code{workspaces}.
+
+@item p95 round trips of 15--20 ms in @samp{emacs -Q}
+@cindex garbage collection
+About one call in eight triggers a garbage collection under @samp{-Q}'s
+small @code{gc-cons-threshold}.  A normal configuration's larger
+threshold brings p95 near p50 (about 1.5 ms).  Measure with
+@samp{etm bench}.
+@end table
+
+@node Concept Index
+@unnumbered Concept Index
+@printindex cp
+
+@node Function Index
+@unnumbered Function Index
+@printindex fn
+
+@node Variable Index
+@unnumbered Variable Index
+@printindex vr
+
+@bye

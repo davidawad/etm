@@ -1,0 +1,22 @@
+[package]
+name = "etm-workspace-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "The global output flag set of the etm CLI: --json, --robot-format=json|toon|markdown|text, --fields, --brief, --limit/--offset paging, and the TOON and markdown renderers"
+license = "MIT"
+repository = "https://github.com/davidawad/etm"
+keywords = ["cli", "json", "toon", "flags"]
+categories = ["command-line-interface"]
+
+[lib]
+name = "workspace_cli"
+path = "src/lib.rs"
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[lints.clippy]
+too_many_lines = "warn"
+too_many_arguments = "warn"
+type_complexity = "warn"

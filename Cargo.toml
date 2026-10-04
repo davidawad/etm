@@ -1,0 +1,48 @@
+[package]
+name = "etm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Drive a running Emacs's workspaces, panes and terminals from the command line, as JSON verbs"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/davidawad/etm"
+homepage = "https://github.com/davidawad/etm"
+documentation = "https://docs.rs/etm"
+keywords = ["emacs", "cli", "terminal", "workspace", "automation"]
+categories = ["command-line-utilities", "development-tools"]
+include = ["src/**", "lisp/*.el", "tests/**", "README.md", "LICENSE"]
+autotests = false
+
+[[test]]
+name = "daemon"
+path = "tests/daemon.rs"
+
+[[test]]
+name = "pages"
+path = "tests/pages.rs"
+
+[[test]]
+name = "elisp"
+path = "tests/elisp.rs"
+
+[[test]]
+name = "flags"
+path = "tests/flags.rs"
+
+[dependencies]
+base64 = "0.22"
+libc = "0.2"
+serde_json = "1"
+workspace-cli = { package = "etm-workspace-cli", path = "crates/workspace-cli", version = "0.1.0" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.clippy]
+too_many_lines = "warn"
+too_many_arguments = "warn"
+type_complexity = "warn"
+
+[workspace]
+members = [".", "crates/workspace-cli"]
