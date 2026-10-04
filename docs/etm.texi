@@ -1,7 +1,7 @@
 \input texinfo    @c -*- texinfo -*-
 @c %**start of header
 @setfilename etm.info
-@settitle etm: drive Emacs from outside, as JSON verbs
+@settitle etm (Emacs Terminal Manager): drive Emacs from outside, as JSON verbs
 @documentencoding UTF-8
 @documentlanguage en
 @set VERSION 0.1.0
@@ -9,7 +9,7 @@
 @c %**end of header
 
 @copying
-This manual is for etm, version @value{VERSION}: a command-line tool and
+This manual is for etm (Emacs Terminal Manager), version @value{VERSION}: a command-line tool and
 an Emacs package that drive a running Emacs (its workspaces, panes and
 terminals) as a closed set of JSON verbs.
 
@@ -29,11 +29,11 @@ file @file{LICENSE}.
 
 @dircategory Emacs misc features
 @direntry
-* etm: (etm).           Drive Emacs workspaces and panes as JSON verbs.
+* etm: (etm).           Emacs Terminal Manager: drive Emacs as JSON verbs.
 @end direntry
 
 @titlepage
-@title etm
+@title etm: Emacs Terminal Manager
 @subtitle Drive Emacs workspaces, panes and terminals as JSON verbs
 @subtitle for version @value{VERSION}
 @author David Awad
@@ -227,7 +227,7 @@ The package lives in @file{lisp/} of the repository, with this manual in
 The MELPA recipe builds this manual too:
 
 @lisp
-(etm :fetcher github :repo "etm-el/etm"
+(etm :fetcher github :repo "davidawad/etm"
      :files (:defaults "docs/etm.texi"))
 @end lisp
 
@@ -252,7 +252,7 @@ On Emacs 30, @code{use-package} takes the same specification:
 
 @lisp
 (straight-use-package
- '(etm :host github :repo "etm-el/etm"
+ '(etm :host github :repo "davidawad/etm"
        :files ("lisp/*.el" "docs/etm.texi")))
 @end lisp
 

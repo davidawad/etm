@@ -1,4 +1,4 @@
-# etm
+# etm: Emacs Terminal Manager
 
 Drive a running Emacs from outside: its workspaces, panes and terminals,
 as a closed set of JSON verbs. Think `ntm` / `tmux` robot mode, for Emacs.
@@ -85,16 +85,16 @@ etm install-elisp ~/.emacs.d/etm  # optional: put the package on disk
 ```
 
 The Emacs package, with this manual, from MELPA (`M-x package-install RET
-etm`; recipe `(etm :fetcher github :repo "etm-el/etm" :files (:defaults
+etm`; recipe `(etm :fetcher github :repo "davidawad/etm" :files (:defaults
 "docs/etm.texi"))`), or straight from the repository:
 
 ```elisp
 ;; Emacs 29.1+
 (package-vc-install
- '(etm :url "https://github.com/etm-el/etm" :lisp-dir "lisp" :doc "docs/etm.texi"))
+ '(etm :url "https://github.com/davidawad/etm" :lisp-dir "lisp" :doc "docs/etm.texi"))
 ;; straight.el
 (straight-use-package
- '(etm :host github :repo "etm-el/etm" :files ("lisp/*.el" "docs/etm.texi")))
+ '(etm :host github :repo "davidawad/etm" :files ("lisp/*.el" "docs/etm.texi")))
 ```
 
 You do not have to install the elisp: when the target Emacs has not loaded
