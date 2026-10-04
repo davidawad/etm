@@ -10,6 +10,22 @@ The full manual is `docs/etm.texi`, an Info manual: `info etm`, or
 build it; see [Install](#install)). This README mirrors its overview and
 quick start.
 
+## Screenshots
+
+Real renders of a plain `emacs -Q` driven by the `etm` CLI, on synthetic
+demo data.
+
+![An editor, an eat terminal and a page, docked by etm](docs/images/pane-layout.png)
+
+![etm send returns a cursor; capture --since reads what arrived after it](docs/images/send-capture.png)
+
+![etm wait --until match, and the terminal it waited on](docs/images/wait-after.png)
+
+![The etm Info manual in Emacs](docs/images/info-etm.png)
+
+More, one per feature and workspace backend, with the command that produced
+each: [docs/showcase.md](docs/showcase.md).
+
 ## Overview
 
 An agent, a script, or you at a shell names a verb; Emacs answers with one
